@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Skyline — Weather Forecast</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="cloud-layer">
+  <div class="cloud c1"></div>
+  <div class="cloud c2"></div>
+  <div class="cloud c3"></div>
+  <div class="cloud c4"></div>
+  <div class="cloud c5"></div>
+  <div class="cloud c6"></div>
+</div>
+
+<div class="app">
+
+  <header>
+    <div class="brand"><span class="dot"></span> Skyline</div>
+    <div class="unit-toggle">
+      <button id="unitC" class="active">°C</button>
+      <button id="unitF">°F</button>
+    </div>
+  </header>
+
+  <div class="search-row">
+    <input type="text" id="cityInput" placeholder="Search for a city..." autocomplete="off">
+    <button class="locate-btn" id="locateBtn" title="Use my location">📍</button>
+    <button id="searchBtn">Search</button>
+    <div class="suggestions" id="suggestions"></div>
+  </div>
+  <div class="helper-text">Search a city, or tap 📍 to use your current location</div>
+
+  <div id="statusBox" class="status-box">
+    <div class="spinner"></div>
+    <div class="status-msg">Loading Gurugram weather…</div>
+  </div>
+
+  <div id="content" class="hidden">
+    <div class="main-grid">
+      <div class="left-col">
+        <div class="hero">
+          <div class="place"><span id="placeName">—</span> <span class="region" id="placeCountry"></span></div>
+          <div class="updated" id="lastUpdated"></div>
+          <div class="icon-big" id="mainIcon">☀️</div>
+          <div class="temp" id="mainTemp">--<sup>°C</sup></div>
+          <div class="desc" id="mainDesc">—</div>
+          <div class="feels" id="feelsLike">Feels like --°</div>
+        </div>
+
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="label">Humidity</div>
+            <div class="value" id="statHumidity">--%</div>
+          </div>
+          <div class="stat-card">
+            <div class="label">Wind</div>
+            <div class="value" id="statWind">-- km/h</div>
+          </div>
+          <div class="stat-card">
+            <div class="label">UV Index</div>
+            <div class="value" id="statUV">--</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="right-col">
+        <div class="section-label">Next 24 Hours</div>
+        <div class="hourly-row" id="hourlyRow"></div>
+
+        <div class="section-label">7-Day Forecast</div>
+        <div class="daily-list" id="dailyList"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer-note">© Rishav</div>
+</div>
+
+<script src="script.js"></script>
+
+</body>
+</html>
