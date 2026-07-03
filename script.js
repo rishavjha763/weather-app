@@ -1,419 +1,499 @@
+/* =========================================================================
+   MEGH — India Rainfall & Weather Forecast
+   -------------------------------------------------------------------------
+   Data source: Open-Meteo (https://open-meteo.com)
+     - Free, no API key, no signup, CORS-enabled — works directly from the
+       browser, unlike IMD's own API which needs a registered key and, per
+       IMD's docs, IP whitelisting for most endpoints.
+     - Geocoding API   → turns a typed city/town/district name into lat/lon
+       (restricted to India via country code "IN").
+     - Forecast API    → daily precipitation, temperature and a weather code
+       for the resolved coordinates.
 
+   Endpoints used:
+     https://geocoding-api.open-meteo.com/v1/search?name=...&country=IN
+     https://api.open-meteo.com/v1/forecast?latitude=..&longitude=..&daily=...
+   ========================================================================= */
 
-const GEOCODE_URL = "https://geocoding-api.open-meteo.com/v1/search";
-const FORECAST_URL = "https://api.open-meteo.com/v1/forecast";
-const REQUEST_TIMEOUT_MS = 10000;
-
-const cityInput = document.getElementById("cityInput");
-const searchBtn = document.getElementById("searchBtn");
-const locateBtn = document.getElementById("locateBtn");
-const suggestBox = document.getElementById("suggestions");
-const statusBox = document.getElementById("statusBox");
-const content = document.getElementById("content");
-const unitCBtn = document.getElementById("unitC");
-const unitFBtn = document.getElementById("unitF");
-
-let unit = "C"; // 'C' or 'F'
-let lastData = null; // last successful API payload, used to re-render on unit toggle
-let lastPlace = null;
-
-// WMO weather code -> { icon, label }
-// Reference: https://open-meteo.com/en/docs (WMO Weather interpretation codes)
-const WMO = {
-  0: { icon: "☀️", label: "Clear sky" },
-  1: { icon: "🌤️", label: "Mainly clear" },
-  2: { icon: "⛅", label: "Partly cloudy" },
-  3: { icon: "☁️", label: "Overcast" },
-  45: { icon: "🌫️", label: "Fog" },
-  48: { icon: "🌫️", label: "Rime fog" },
-  51: { icon: "🌦️", label: "Light drizzle" },
-  53: { icon: "🌦️", label: "Drizzle" },
-  55: { icon: "🌧️", label: "Dense drizzle" },
-  56: { icon: "🌧️", label: "Freezing drizzle" },
-  57: { icon: "🌧️", label: "Freezing drizzle" },
-  61: { icon: "🌦️", label: "Light rain" },
-  63: { icon: "🌧️", label: "Rain" },
-  65: { icon: "🌧️", label: "Heavy rain" },
-  66: { icon: "🌧️", label: "Freezing rain" },
-  67: { icon: "🌧️", label: "Freezing rain" },
-  71: { icon: "🌨️", label: "Light snow" },
-  73: { icon: "🌨️", label: "Snow" },
-  75: { icon: "❄️", label: "Heavy snow" },
-  77: { icon: "❄️", label: "Snow grains" },
-  80: { icon: "🌦️", label: "Rain showers" },
-  81: { icon: "🌧️", label: "Rain showers" },
-  82: { icon: "⛈️", label: "Violent showers" },
-  85: { icon: "🌨️", label: "Snow showers" },
-  86: { icon: "❄️", label: "Snow showers" },
-  95: { icon: "⛈️", label: "Thunderstorm" },
-  96: { icon: "⛈️", label: "Thunderstorm with hail" },
-  99: { icon: "⛈️", label: "Thunderstorm with hail" },
+const CONFIG = {
+  GEOCODE_URL: "https://geocoding-api.open-meteo.com/v1/search",
+  FORECAST_URL: "https://api.open-meteo.com/v1/forecast",
+  COUNTRY: "IN",
+  REQUEST_TIMEOUT_MS: 8000,
 };
-function wmoInfo(code) {
-  return WMO[code] || { icon: "🌡️", label: "Unknown" };
-}
 
-function cToF(c) {
-  return (c * 9) / 5 + 32;
-}
-function fmtTemp(celsius) {
-  const v = unit === "C" ? celsius : cToF(celsius);
-  return Math.round(v);
-}
+// IMD-style rainfall categories, mapped to IMD's official warning colours.
+// Thresholds follow IMD's standard 24hr rainfall classification (mm).
+const CATEGORY_SCALE = [
+  { max: 0, label: "No Rain", color: "var(--warn-green)" },
+  { max: 15, label: "Light Rain", color: "var(--warn-green)" },
+  { max: 64, label: "Moderate Rain", color: "var(--warn-yellow)" },
+  { max: 115, label: "Heavy Rain", color: "var(--warn-orange)" },
+  { max: 204, label: "Very Heavy Rain", color: "var(--warn-red)" },
+  { max: Infinity, label: "Extremely Heavy Rain", color: "var(--warn-red)" },
+];
 
+// Minimal WMO weather-code → plain-English map (Open-Meteo uses WMO codes).
+const WMO = {
+  0: "Clear sky",
+  1: "Mainly clear",
+  2: "Partly cloudy",
+  3: "Overcast",
+  45: "Fog",
+  48: "Depositing rime fog",
+  51: "Light drizzle",
+  53: "Drizzle",
+  55: "Dense drizzle",
+  61: "Light rain",
+  63: "Rain",
+  65: "Heavy rain",
+  66: "Freezing rain",
+  67: "Heavy freezing rain",
+  71: "Light snow",
+  73: "Snow",
+  75: "Heavy snow",
+  80: "Light showers",
+  81: "Showers",
+  82: "Violent showers",
+  95: "Thunderstorm",
+  96: "Thunderstorm, hail",
+  99: "Severe thunderstorm, hail",
+};
 
-function timeoutPromise(ms) {
-  return new Promise((_, reject) => {
-    setTimeout(() => reject(new Error("TIMEOUT")), ms);
+// ---------------------------------------------------------------------
+// DOM references
+// ---------------------------------------------------------------------
+const el = {
+  citySearch: document.getElementById("citySearch"),
+  suggestList: document.getElementById("suggestList"),
+  fetchBtn: document.getElementById("fetchBtn"),
+  statusBanner: document.getElementById("statusBanner"),
+  heroLocation: document.getElementById("heroLocation"),
+  heroActual: document.getElementById("heroActual"),
+  heroDate: document.getElementById("heroDate"),
+  heroNormal: document.getElementById("heroNormal"),
+  heroDeparture: document.getElementById("heroDeparture"),
+  heroBadge: document.getElementById("heroBadge"),
+  forecastStrip: document.getElementById("forecastStrip"),
+  gaugeFill: document.getElementById("gaugeFill"),
+  fillGradStart: document.getElementById("fillGradStart"),
+  fillGradEnd: document.getElementById("fillGradEnd"),
+  heroTemp: document.getElementById("heroTemp"),
+  unitC: document.getElementById("unitC"),
+  unitF: document.getElementById("unitF"),
+  geoBtn: document.getElementById("geoBtn"),
+  hero: document.getElementById("hero"),
+};
+
+// Stat labels swap out from IMD's "Normal/Departure" framing to plain
+// temperature stats, since Open-Meteo doesn't publish a climatological
+// "normal" baseline the way IMD's own rainfall API does.
+document.addEventListener("DOMContentLoaded", () => {
+  const labels = document.querySelectorAll(".stat__label");
+  if (labels[0]) labels[0].textContent = "High / Low";
+  if (labels[1]) labels[1].textContent = "Conditions";
+});
+
+let currentDays = []; // normalized 5-day forecast currently on screen
+let selectedPlace = null; // { name, admin1, lat, lon }
+let suggestions = [];
+let activeSuggestIndex = -1;
+let searchDebounce = null;
+let currentDayIndex = 0;
+let tempUnit = "C"; // 'C' or 'F' — Open-Meteo data is fetched in °C and converted on display
+
+// ---------------------------------------------------------------------
+// Init
+// ---------------------------------------------------------------------
+function init() {
+  el.citySearch.addEventListener("input", onSearchInput);
+  el.citySearch.addEventListener("keydown", onSearchKeydown);
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest(".field--search")) hideSuggestions();
   });
+  el.fetchBtn.addEventListener("click", () => {
+    if (selectedPlace) loadForecast(selectedPlace);
+    else if (el.citySearch.value.trim())
+      searchAndPickFirst(el.citySearch.value.trim());
+  });
+  el.unitC.addEventListener("click", () => setTempUnit("C"));
+  el.unitF.addEventListener("click", () => setTempUnit("F"));
+  el.geoBtn.addEventListener("click", useMyLocation);
+
+  // Load a sensible default so the page never looks empty on first paint.
+  searchAndPickFirst("New Delhi");
 }
 
-async function fetchJSONOnce(url) {
-  let res;
+// ---------------------------------------------------------------------
+// Geocoding: search-as-you-type
+// ---------------------------------------------------------------------
+function onSearchInput() {
+  selectedPlace = null;
+  const q = el.citySearch.value.trim();
+  clearTimeout(searchDebounce);
+  if (q.length < 2) {
+    hideSuggestions();
+    return;
+  }
+  searchDebounce = setTimeout(() => fetchSuggestions(q), 300);
+}
+
+async function fetchSuggestions(query) {
   try {
-    res = await Promise.race([fetch(url), timeoutPromise(REQUEST_TIMEOUT_MS)]);
+    // NOTE: Open-Meteo's real parameter for restricting by country is
+    // `countryCode` (not `country`) — using the wrong name meant the filter
+    // was silently ignored/dropped by the server for some queries, which is
+    // why certain searches (especially state names) came back empty.
+    // Fix: fetch a wider, unfiltered set of matches, then filter to India
+    // ourselves — this is robust regardless of exact server param naming.
+    const url = new URL(CONFIG.GEOCODE_URL);
+    url.searchParams.set("name", query);
+    url.searchParams.set("count", "20");
+    url.searchParams.set("language", "en");
+    url.searchParams.set("format", "json");
+
+    const res = await fetchWithTimeout(url.toString());
+    const data = await res.json();
+    const results = data.results || [];
+
+    // Keep only Indian matches (any feature type: city, town, district,
+    // or state/admin1 — so searching a state name like "Maharashtra" or
+    // "Kerala" resolves too, not just cities).
+    suggestions = results
+      .filter((r) => r.country_code === CONFIG.COUNTRY)
+      .slice(0, 8)
+      .map((r) => ({
+        name: r.name,
+        admin1: r.admin1 && r.admin1 !== r.name ? r.admin1 : "",
+        lat: r.latitude,
+        lon: r.longitude,
+      }));
+    renderSuggestions();
   } catch (err) {
-    if (err.message === "TIMEOUT") {
-      throw new Error(
-        "The request timed out. Please check your internet connection and try again.",
-      );
-    }
-    if (err instanceof TypeError) {
-      // fetch() throws a generic TypeError ("Failed to fetch") for network/CORS/DNS issues
-      throw new Error(
-        'Could not reach the weather service. Check your internet connection, then tap "Try Again". If this keeps happening, the page may need to be served from a local server (e.g. VS Code "Live Server") instead of opened directly as a file.',
-      );
-    }
-    throw err;
-  }
-
-  if (!res.ok) {
-    let reason = `HTTP ${res.status}`;
-    try {
-      const errBody = await res.json();
-      if (errBody && errBody.reason) reason = errBody.reason;
-    } catch (_) {
-      /* ignore parse errors on error body */
-    }
-    throw new Error(reason);
-  }
-  return await res.json();
-}
-
-async function fetchJSON(url) {
-  try {
-    return await fetchJSONOnce(url);
-  } catch (firstErr) {
-    console.warn("First attempt failed, retrying once:", firstErr.message);
-    await new Promise((r) => setTimeout(r, 1200));
-    try {
-      return await fetchJSONOnce(url);
-    } catch (secondErr) {
-      console.warn("Retry also failed:", secondErr.message);
-      throw secondErr;
-    }
+    console.warn("[MEGH] geocoding failed:", err.message);
+    suggestions = [];
+    renderSuggestions();
   }
 }
 
-function showLoading(msg) {
-  statusBox.innerHTML = `<div class="spinner"></div><div class="status-msg">${msg}</div>`;
-  statusBox.classList.remove("hidden");
-  content.classList.add("hidden");
-}
-function showError(msg) {
-  statusBox.innerHTML = `
-    <div class="status-icon">⚠️</div>
-    <div class="status-msg">${msg}</div>
-    <button class="retry-btn" id="retryBtn">Try Again</button>
-  `;
-  statusBox.classList.remove("hidden");
-  content.classList.add("hidden");
-  document.getElementById("retryBtn").addEventListener("click", () => {
-    if (lastPlace) loadWeatherForPlace(lastPlace);
-    else
-      loadWeatherForPlace({
-        name: "Gurugram",
-        country: "India",
-        admin1: "Haryana",
-        latitude: 28.4595,
-        longitude: 77.0266,
-      });
-  });
-}
-function showContent() {
-  statusBox.classList.add("hidden");
-  content.classList.remove("hidden");
-}
-
-function updateBackground(isDay, code) {
-  const body = document.body;
-  if (!isDay) {
-    body.style.background =
-      "linear-gradient(160deg, #0B1B33 0%, #17284a 45%, #0B1B33 100%)";
-  } else if (code >= 61 && code <= 99) {
-    body.style.background =
-      "linear-gradient(160deg, #33475a 0%, #4a6178 45%, #33475a 100%)";
-  } else {
-    body.style.background =
-      "linear-gradient(160deg, #1B3A5C 0%, #2C5885 45%, #1B3A5C 100%)";
+function renderSuggestions() {
+  activeSuggestIndex = -1;
+  if (suggestions.length === 0) {
+    el.suggestList.innerHTML = `<li class="suggest-list__empty">No Indian cities found — try a different spelling.</li>`;
+    el.suggestList.hidden = false;
+    el.citySearch.setAttribute("aria-expanded", "true");
+    return;
   }
-}
+  el.suggestList.innerHTML = suggestions
+    .map(
+      (s, i) =>
+        `<li role="option" data-index="${i}">${s.name}<span>${s.admin1}</span></li>`,
+    )
+    .join("");
+  el.suggestList.hidden = false;
+  el.citySearch.setAttribute("aria-expanded", "true");
 
-async function geocodeCity(name) {
-  const url = `${GEOCODE_URL}?name=${encodeURIComponent(name)}&count=5&language=en&format=json`;
-  const data = await fetchJSON(url);
-  return data.results || [];
-}
-
-async function fetchForecast(lat, lon) {
-  const params = new URLSearchParams({
-    latitude: lat,
-    longitude: lon,
-    current:
-      "temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m,is_day",
-    hourly: "temperature_2m,weather_code",
-    daily: "weather_code,temperature_2m_max,temperature_2m_min,uv_index_max",
-    timezone: "auto",
-    forecast_days: 7,
-  });
-  return fetchJSON(`${FORECAST_URL}?${params.toString()}`);
-}
-
-function renderCurrent(place, data) {
-  const cur = data.current;
-  const info = wmoInfo(cur.weather_code);
-
-  document.getElementById("placeName").textContent = place.name;
-  document.getElementById("placeCountry").textContent = place.admin1
-    ? `${place.admin1}, ${place.country}`
-    : place.country || "";
-
-  const updatedTime = new Date(cur.time);
-  document.getElementById("lastUpdated").textContent =
-    `Updated ${updatedTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
-
-  document.getElementById("mainIcon").textContent = info.icon;
-  document.getElementById("mainTemp").innerHTML =
-    `${fmtTemp(cur.temperature_2m)}<sup>°${unit}</sup>`;
-  document.getElementById("mainDesc").textContent = info.label;
-  document.getElementById("feelsLike").textContent =
-    `Feels like ${fmtTemp(cur.apparent_temperature)}°`;
-
-  document.getElementById("statHumidity").textContent =
-    `${cur.relative_humidity_2m}%`;
-  document.getElementById("statWind").textContent =
-    `${Math.round(cur.wind_speed_10m)} km/h`;
-
-  const todayUV = data.daily.uv_index_max
-    ? Math.round(data.daily.uv_index_max[0])
-    : "--";
-  document.getElementById("statUV").textContent = todayUV;
-
-  updateBackground(cur.is_day === 1, cur.weather_code);
-}
-
-function renderHourly(data) {
-  const row = document.getElementById("hourlyRow");
-  row.innerHTML = "";
-
-  const nowISO = data.current.time;
-  let startIdx = data.hourly.time.findIndex((t) => t === nowISO);
-  if (startIdx === -1) startIdx = 0;
-
-  for (
-    let i = startIdx;
-    i < Math.min(startIdx + 24, data.hourly.time.length);
-    i++
-  ) {
-    const dt = new Date(data.hourly.time[i]);
-    const hourLabel =
-      dt.getHours() === 0
-        ? "12AM"
-        : dt.getHours() < 12
-          ? dt.getHours() + "AM"
-          : dt.getHours() === 12
-            ? "12PM"
-            : dt.getHours() - 12 + "PM";
-    const info = wmoInfo(data.hourly.weather_code[i]);
-    const isNow = i === startIdx;
-
-    const card = document.createElement("div");
-    card.className = "hour-card" + (isNow ? " now" : "");
-    card.innerHTML = `
-      <div class="h-time">${isNow ? "Now" : hourLabel}</div>
-      <div class="h-icon">${info.icon}</div>
-      <div class="h-temp">${fmtTemp(data.hourly.temperature_2m[i])}°</div>
-    `;
-    row.appendChild(card);
-  }
-}
-
-function renderDaily(data) {
-  const list = document.getElementById("dailyList");
-  list.innerHTML = "";
-
-  const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-
-  data.daily.time.forEach((dateStr, i) => {
-    const dt = new Date(dateStr);
-    const dayName = i === 0 ? "Today" : days[dt.getDay()];
-    const info = wmoInfo(data.daily.weather_code[i]);
-
-    const row = document.createElement("div");
-    row.className = "day-row";
-    row.innerHTML = `
-      <div class="d-name">${dayName}</div>
-      <div class="d-icon">${info.icon}</div>
-      <div class="d-desc">${info.label}</div>
-      <div class="d-range">${fmtTemp(data.daily.temperature_2m_max[i])}° <span class="lo">/ ${fmtTemp(data.daily.temperature_2m_min[i])}°</span></div>
-    `;
-    list.appendChild(row);
-  });
-}
-
-function renderAll(place, data) {
-  lastData = data;
-  lastPlace = place;
-  renderCurrent(place, data);
-  renderHourly(data);
-  renderDaily(data);
-  showContent();
-}
-
-async function loadWeatherForPlace(place) {
-  try {
-    showLoading(`Loading weather for ${place.name}…`);
-    const data = await fetchForecast(place.latitude, place.longitude);
-    renderAll(place, data);
-  } catch (err) {
-    console.error(err);
-    showError(
-      err.message || "Something went wrong while loading weather data.",
+  el.suggestList.querySelectorAll("li[data-index]").forEach((li) => {
+    li.addEventListener("click", () =>
+      pickSuggestion(Number(li.dataset.index)),
     );
+  });
+}
+
+function hideSuggestions() {
+  el.suggestList.hidden = true;
+  el.citySearch.setAttribute("aria-expanded", "false");
+}
+
+function onSearchKeydown(e) {
+  const items = el.suggestList.querySelectorAll("li[data-index]");
+  if (e.key === "ArrowDown" && items.length) {
+    e.preventDefault();
+    activeSuggestIndex = Math.min(activeSuggestIndex + 1, items.length - 1);
+    highlightSuggestion(items);
+  } else if (e.key === "ArrowUp" && items.length) {
+    e.preventDefault();
+    activeSuggestIndex = Math.max(activeSuggestIndex - 1, 0);
+    highlightSuggestion(items);
+  } else if (e.key === "Enter") {
+    e.preventDefault();
+    if (activeSuggestIndex >= 0) pickSuggestion(activeSuggestIndex);
+    else if (suggestions.length) pickSuggestion(0);
+    else if (el.citySearch.value.trim())
+      searchAndPickFirst(el.citySearch.value.trim());
+  } else if (e.key === "Escape") {
+    hideSuggestions();
   }
 }
 
-async function handleSearch() {
-  const query = cityInput.value.trim();
-  if (!query) return;
+function highlightSuggestion(items) {
+  items.forEach((li, i) =>
+    li.classList.toggle("is-active", i === activeSuggestIndex),
+  );
+  items[activeSuggestIndex]?.scrollIntoView({ block: "nearest" });
+}
 
-  suggestBox.style.display = "none";
-  showLoading("Searching for city…");
+function pickSuggestion(index) {
+  const place = suggestions[index];
+  if (!place) return;
+  selectedPlace = place;
+  hideSuggestions();
+  // Empty the box straight away so it's ready for the next search; the
+  // placeholder quietly confirms what's currently loaded instead.
+  el.citySearch.value = "";
+  el.citySearch.placeholder = `Showing: ${place.name}${place.admin1 ? ", " + place.admin1 : ""} — search another city…`;
+  loadForecast(place);
+}
+
+async function searchAndPickFirst(query) {
+  await fetchSuggestions(query);
+  if (suggestions.length) pickSuggestion(0);
+  else
+    setStatus(
+      "error",
+      `Couldn't find "${query}" in India — check the spelling and try again.`,
+    );
+}
+
+// ---------------------------------------------------------------------
+// Premium extra: one-tap "use my current location"
+// ---------------------------------------------------------------------
+function useMyLocation() {
+  if (!navigator.geolocation) {
+    setStatus("error", "Geolocation is not supported by this browser.");
+    return;
+  }
+  el.geoBtn.classList.add("is-loading");
+  setStatus("loading", "Finding your location…");
+
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      el.geoBtn.classList.remove("is-loading");
+      const place = {
+        name: "Your location",
+        admin1: "",
+        lat: pos.coords.latitude,
+        lon: pos.coords.longitude,
+      };
+      selectedPlace = place;
+      hideSuggestions();
+      el.citySearch.value = "";
+      el.citySearch.placeholder =
+        "Showing: your current location — search a city…";
+      loadForecast(place);
+    },
+    (err) => {
+      el.geoBtn.classList.remove("is-loading");
+      setStatus(
+        "error",
+        `Couldn't get your location (${err.message}). Try searching instead.`,
+      );
+    },
+    { timeout: 10000 },
+  );
+}
+
+// ---------------------------------------------------------------------
+// Status banner helper
+// ---------------------------------------------------------------------
+function setStatus(tone, message) {
+  el.statusBanner.dataset.tone = tone;
+  el.statusBanner.textContent = message;
+  el.statusBanner.classList.add("is-visible");
+}
+function clearStatus() {
+  el.statusBanner.classList.remove("is-visible");
+}
+
+// ---------------------------------------------------------------------
+// Forecast fetch
+// ---------------------------------------------------------------------
+async function loadForecast(place) {
+  el.fetchBtn.disabled = true;
+  setStatus("loading", `Fetching live forecast for ${place.name}…`);
 
   try {
-    const results = await geocodeCity(query);
-    if (results.length === 0) {
-      showError(
-        `No results found for "${query}". Check the spelling and try again.`,
-      );
-      return;
-    }
-    await loadWeatherForPlace(results[0]);
+    const url = new URL(CONFIG.FORECAST_URL);
+    url.searchParams.set("latitude", place.lat);
+    url.searchParams.set("longitude", place.lon);
+    url.searchParams.set(
+      "daily",
+      [
+        "precipitation_sum",
+        "temperature_2m_max",
+        "temperature_2m_min",
+        "weathercode",
+      ].join(","),
+    );
+    url.searchParams.set("timezone", "Asia/Kolkata");
+    url.searchParams.set("forecast_days", "5");
+
+    const res = await fetchWithTimeout(url.toString());
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+
+    currentDays = normalizeOpenMeteo(data);
+    clearStatus(); // hero + forecast strip already make the location/data clear — no banner needed on success
   } catch (err) {
-    console.error(err);
-    showError(err.message || "City search failed.");
+    console.warn("[MEGH] forecast fetch failed:", err.message);
+    setStatus(
+      "error",
+      `Couldn't reach the forecast service ("${err.message}"). Check your connection and try again.`,
+    );
+    el.fetchBtn.disabled = false;
+    return;
   }
+
+  el.fetchBtn.disabled = false;
+  renderForecastStrip(currentDays);
+  el.hero.classList.remove("is-ready");
+  void el.hero.offsetWidth; // restart the entrance animation on every fresh search
+  el.hero.classList.add("is-ready");
+  selectDay(0);
 }
 
-searchBtn.addEventListener("click", handleSearch);
-cityInput.addEventListener("keydown", (e) => {
-  if (e.key === "Enter") handleSearch();
-});
+function normalizeOpenMeteo(data) {
+  const d = data.daily;
+  if (!d || !Array.isArray(d.time))
+    throw new Error("unexpected response shape");
 
-let debounceTimer;
-cityInput.addEventListener("input", () => {
-  clearTimeout(debounceTimer);
-  const query = cityInput.value.trim();
-  if (query.length < 2) {
-    suggestBox.style.display = "none";
-    return;
-  }
-  debounceTimer = setTimeout(async () => {
-    try {
-      const results = await geocodeCity(query);
-      if (results.length === 0) {
-        suggestBox.style.display = "none";
-        return;
-      }
-      suggestBox.innerHTML = results
-        .map(
-          (r) => `
-        <div data-lat="${r.latitude}" data-lon="${r.longitude}" data-name="${r.name}" data-country="${r.country || ""}" data-admin="${r.admin1 || ""}">
-          <div class="s-name">${r.name}</div>
-          <div class="s-region">${r.admin1 ? r.admin1 + ", " : ""}${r.country || ""}</div>
-        </div>
-      `,
-        )
-        .join("");
-      suggestBox.style.display = "block";
+  return d.time.map((date, i) => {
+    const actual = Math.round((d.precipitation_sum?.[i] ?? 0) * 10) / 10;
+    return {
+      date,
+      actual,
+      tMax: Math.round(d.temperature_2m_max?.[i] ?? 0),
+      tMin: Math.round(d.temperature_2m_min?.[i] ?? 0),
+      conditions: WMO[d.weathercode?.[i]] || "Mixed conditions",
+      category: categorize(actual),
+    };
+  });
+}
 
-      suggestBox.querySelectorAll("div[data-lat]").forEach((div) => {
-        div.addEventListener("click", () => {
-          const place = {
-            name: div.dataset.name,
-            country: div.dataset.country,
-            admin1: div.dataset.admin,
-            latitude: parseFloat(div.dataset.lat),
-            longitude: parseFloat(div.dataset.lon),
-          };
-          cityInput.value = place.name;
-          suggestBox.style.display = "none";
-          loadWeatherForPlace(place);
-        });
-      });
-    } catch (err) {
-      console.error(err);
-      // Suggestions failing silently is fine — the main search button still works
-      suggestBox.style.display = "none";
-    }
-  }, 400);
-});
+function categorize(mm) {
+  return CATEGORY_SCALE.find((c) => mm <= c.max);
+}
 
-// Close suggestions when clicking elsewhere
-document.addEventListener("click", (e) => {
-  if (!e.target.closest(".search-row")) suggestBox.style.display = "none";
-});
+// --- temperature unit handling -------------------------------------------
+function celsiusTo(unit, c) {
+  return unit === "F" ? Math.round((c * 9) / 5 + 32) : Math.round(c);
+}
 
-locateBtn.addEventListener("click", () => {
-  if (!navigator.geolocation) {
-    showError("Geolocation is not supported in this browser.");
-    return;
-  }
-  showLoading("Getting your location…");
-  navigator.geolocation.getCurrentPosition(
-    async (pos) => {
-      const { latitude, longitude } = pos.coords;
-      const place = {
-        name: "Your Location",
-        country: "",
-        admin1: "",
-        latitude,
-        longitude,
-      };
-      await loadWeatherForPlace(place);
-    },
-    () =>
-      showError(
-        "Location access was denied. Please search for a city instead.",
-      ),
+function setTempUnit(unit) {
+  if (unit === tempUnit) return;
+  tempUnit = unit;
+  el.unitC.classList.toggle("is-active", unit === "C");
+  el.unitF.classList.toggle("is-active", unit === "F");
+  if (currentDays.length) selectDay(currentDayIndex); // re-render with new unit
+}
+
+async function fetchWithTimeout(url) {
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(),
+    CONFIG.REQUEST_TIMEOUT_MS,
   );
-});
-
-function setUnit(newUnit) {
-  if (unit === newUnit) return;
-  unit = newUnit;
-  unitCBtn.classList.toggle("active", unit === "C");
-  unitFBtn.classList.toggle("active", unit === "F");
-  if (lastData && lastPlace) renderAll(lastPlace, lastData);
+  try {
+    return await fetch(url, {
+      headers: { Accept: "application/json" },
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
 }
-unitCBtn.addEventListener("click", () => setUnit("C"));
-unitFBtn.addEventListener("click", () => setUnit("F"));
 
-// Default: load Gurugram on first visit
-loadWeatherForPlace({
-  name: "Gurugram",
-  country: "India",
-  admin1: "Haryana",
-  latitude: 28.4595,
-  longitude: 77.0266,
-});
+// ---------------------------------------------------------------------
+// Rendering
+// ---------------------------------------------------------------------
+const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+function renderForecastStrip(days) {
+  el.forecastStrip.innerHTML = days
+    .map((d, i) => {
+      const dateObj = new Date(d.date);
+      const dayLabel =
+        i === 0 ? "Today" : DAY_NAMES[dateObj.getDay()] || `Day ${i + 1}`;
+      const barPct = Math.min(100, Math.round((d.actual / 60) * 100));
+      return `
+        <button class="day-card" data-index="${i}" style="--dot:${d.category.color}" aria-pressed="${i === 0}">
+          <div class="day-card__top">
+            <span class="day-card__day">${dayLabel}</span>
+            <span class="day-card__date">${formatDate(d.date)}</span>
+          </div>
+          <div class="day-card__mm">${d.actual}<span>mm</span></div>
+          <div class="day-card__bar"><i style="width:${barPct}%"></i></div>
+          <div class="day-card__cat">${d.category.label}</div>
+        </button>
+      `;
+    })
+    .join("");
+
+  el.forecastStrip.querySelectorAll(".day-card").forEach((card) => {
+    card.addEventListener("click", () => selectDay(Number(card.dataset.index)));
+  });
+}
+
+function selectDay(index) {
+  const day = currentDays[index];
+  if (!day) return;
+  currentDayIndex = index;
+
+  el.forecastStrip.querySelectorAll(".day-card").forEach((card, i) => {
+    const active = i === index;
+    card.classList.toggle("is-active", active);
+    card.setAttribute("aria-pressed", String(active));
+  });
+
+  const label = selectedPlace
+    ? `${selectedPlace.name}${selectedPlace.admin1 ? ", " + selectedPlace.admin1 : ""}`
+    : el.citySearch.value;
+
+  const tMax = celsiusTo(tempUnit, day.tMax);
+  const tMin = celsiusTo(tempUnit, day.tMin);
+  const tAvg = celsiusTo(tempUnit, (day.tMax + day.tMin) / 2);
+
+  el.heroLocation.textContent = label;
+  el.heroActual.textContent = day.actual;
+  el.heroDate.textContent = formatDate(day.date, true);
+  el.heroNormal.textContent = `${tMax}° / ${tMin}°${tempUnit}`;
+  el.heroDeparture.textContent = day.conditions;
+  el.heroBadge.textContent = day.category.label;
+  el.heroBadge.style.setProperty("--dot", day.category.color);
+
+  el.heroTemp.innerHTML = `${tAvg}<span class="hero__unit">°${tempUnit}</span>`;
+
+  updateGauge(day);
+}
+
+function updateGauge(day) {
+  // Map rainfall (0–120mm ceiling) to a fill height inside the cloud
+  // silhouette (clip area spans roughly y:82 to y:184 in the 220x260 viewBox).
+  const ceiling = 120;
+  const ratio = Math.min(1, day.actual / ceiling);
+  const topY = 184 - ratio * 100; // 184 = empty, 84 = full
+  el.gaugeFill.setAttribute("y", String(topY));
+
+  el.fillGradStart.setAttribute("stop-color", day.category.color);
+  el.fillGradEnd.setAttribute("stop-color", "var(--rain-light)");
+
+  // Vary droplet tempo with intensity: heavier rain = faster droplets.
+  const speed = Math.max(0.7, 1.8 - ratio * 1.1);
+  document.querySelectorAll(".droplet").forEach((dEl) => {
+    dEl.style.animationDuration = `${speed}s`;
+  });
+}
+
+function formatDate(iso, long = false) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString(
+    "en-IN",
+    long
+      ? { weekday: "long", day: "numeric", month: "long" }
+      : { day: "numeric", month: "short" },
+  );
+}
+
+// ---------------------------------------------------------------------
+document.addEventListener("DOMContentLoaded", init);

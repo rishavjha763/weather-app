@@ -3,87 +3,183 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Skyline</title>
+<title>MEGH — State &amp; District Rainfall Forecast</title>
+<meta name="description" content="5-day district-wise rainfall forecast powered by the India Meteorological Department (IMD) API.">
+
+<!-- Fonts: Fraunces (display / editorial numerals), Public Sans (UI/body), IBM Plex Mono (data readouts) -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-<div class="cloud-layer">
-  <div class="cloud c1"></div>
-  <div class="cloud c2"></div>
-  <div class="cloud c3"></div>
-  <div class="cloud c4"></div>
-  <div class="cloud c5"></div>
-  <div class="cloud c6"></div>
-</div>
-
-<div class="app">
-
-  <header>
-    <div class="brand"><span class="dot"></span> Skyline</div>
-    <div class="unit-toggle">
-      <button id="unitC" class="active">°C</button>
-      <button id="unitF">°F</button>
-    </div>
-  </header>
-
-  <div class="search-row">
-    <input type="text" id="cityInput" placeholder="Search for a city..." autocomplete="off">
-    <button class="locate-btn" id="locateBtn" title="Use my location">📍</button>
-    <button id="searchBtn">Search</button>
-    <div class="suggestions" id="suggestions"></div>
-  </div>
-  <div class="helper-text">Search a city, or tap 📍 to use your current location</div>
-
-  <div id="statusBox" class="status-box">
-    <div class="spinner"></div>
-    <div class="status-msg">Loading Gurugram weather…</div>
+  <!-- Ambient monsoon backdrop: pure CSS, no images, respects prefers-reduced-motion -->
+  <div class="sky" aria-hidden="true">
+    <div class="sky__wash"></div>
+    <div class="sky__rain"></div>
   </div>
 
-  <div id="content" class="hidden">
-    <div class="main-grid">
-      <div class="left-col">
-        <div class="hero">
-          <div class="place"><span id="placeName">—</span> <span class="region" id="placeCountry"></span></div>
-          <div class="updated" id="lastUpdated"></div>
-          <div class="icon-big" id="mainIcon">☀️</div>
-          <div class="temp" id="mainTemp">--<sup>°C</sup></div>
-          <div class="desc" id="mainDesc">—</div>
-          <div class="feels" id="feelsLike">Feels like --°</div>
+  <div class="page">
+
+    <!-- ============ HEADER ============ -->
+    <header class="site-header">
+      <div class="brand">
+        <span class="brand__mark" aria-hidden="true">
+          <svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M14 30c-5 0-9-4-9-9s4-9 9-9c1.4-4.6 5.7-8 10.8-8 5.9 0 10.8 4.4 11.6 10.1C41.3 14.9 44 18.5 44 22.7c0 5.1-4.1 9.3-9.3 9.3H14Z" fill="currentColor" opacity="0.9"/>
+          </svg>
+        </span>
+        <div class="brand__type">
+          <span class="brand__name">MEGH</span>
+          <span class="brand__tag">state &amp; district rainfall forecast</span>
         </div>
+      </div>
+    </header>
 
-        <div class="stats-grid">
-          <div class="stat-card">
-            <div class="label">Humidity</div>
-            <div class="value" id="statHumidity">--%</div>
+    <!-- ============ STATUS BANNER (live / demo / error / loading) ============ -->
+    <div id="statusBanner" class="status-banner" role="status" aria-live="polite"></div>
+
+    <!-- ============ CONTROLS ============ -->
+    <section class="controls" aria-label="Choose location">
+      <div class="field field--search">
+        <label for="citySearch">City / town / district</label>
+        <div class="search-box">
+          <input
+            id="citySearch"
+            type="text"
+            placeholder="Try “Delhi”, “Pune”, “Kochi”…"
+            autocomplete="off"
+            role="combobox"
+            aria-expanded="false"
+            aria-controls="suggestList"
+          >
+          <button type="button" id="geoBtn" class="geo-btn" title="Use my current location" aria-label="Use my current location">
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+              <path d="M12 2v3M12 19v3M2 12h3M19 12h3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              <circle cx="12" cy="12" r="4.5" stroke="currentColor" stroke-width="2" fill="none"/>
+            </svg>
+          </button>
+          <ul id="suggestList" class="suggest-list" role="listbox" hidden></ul>
+        </div>
+      </div>
+      <button id="fetchBtn" class="btn-primary" type="button">
+        <span>Get forecast</span>
+        <svg class="btn-primary__icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+          <path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+        </svg>
+      </button>
+      <div class="unit-toggle" role="group" aria-label="Temperature unit">
+        <button type="button" id="unitC" class="unit-toggle__btn is-active" data-unit="C">°C</button>
+        <button type="button" id="unitF" class="unit-toggle__btn" data-unit="F">°F</button>
+      </div>
+    </section>
+
+    <!-- ============ HERO: signature rain-gauge readout ============ -->
+    <section class="hero" id="hero" aria-live="polite">
+
+      <div class="hero__gauge">
+        <!-- Signature element: an animated monsoon gauge. Fill height + droplet
+             rhythm are driven by JS according to the selected day's rainfall category. -->
+        <svg id="gaugeSvg" viewBox="0 0 220 260" width="220" height="260" role="img" aria-labelledby="gaugeTitle">
+          <title id="gaugeTitle">Rainfall intensity gauge</title>
+          <defs>
+            <clipPath id="cloudClip">
+              <path d="M46 150c-19 0-34-15-34-34s15-34 34-34c5-17 21-30 40-30 22 0 40 16 43 37 14 3 25 15 25 30 0 17-14 31-31 31H46Z"/>
+            </clipPath>
+            <linearGradient id="fillGrad" x1="0" y1="1" x2="0" y2="0">
+              <stop id="fillGradStart" offset="0" stop-color="var(--rain)"/>
+              <stop id="fillGradEnd" offset="1" stop-color="var(--rain-light)"/>
+            </linearGradient>
+          </defs>
+
+          <!-- cloud outline -->
+          <path class="gauge-cloud" d="M46 150c-19 0-34-15-34-34s15-34 34-34c5-17 21-30 40-30 22 0 40 16 43 37 14 3 25 15 25 30 0 17-14 31-31 31H46Z"/>
+
+          <!-- animated fill level, clipped to cloud silhouette -->
+          <g clip-path="url(#cloudClip)">
+            <rect id="gaugeFill" x="0" y="120" width="220" height="140" fill="url(#fillGrad)"/>
+          </g>
+
+          <!-- falling droplets, count/speed varied by JS via CSS custom props -->
+          <g id="dropletGroup" class="droplets">
+            <circle class="droplet d1" cx="58" cy="150" r="3"/>
+            <circle class="droplet d2" cx="88" cy="150" r="3"/>
+            <circle class="droplet d3" cx="118" cy="150" r="3"/>
+            <circle class="droplet d4" cx="148" cy="150" r="3"/>
+            <circle class="droplet d5" cx="73" cy="150" r="2.4"/>
+            <circle class="droplet d6" cx="133" cy="150" r="2.4"/>
+          </g>
+
+          <!-- gauge stem / measuring ticks, purely decorative rain-gauge cue -->
+          <line x1="110" y1="196" x2="110" y2="248" stroke="var(--line)" stroke-width="2"/>
+          <line x1="96" y1="248" x2="124" y2="248" stroke="var(--line)" stroke-width="3" stroke-linecap="round"/>
+        </svg>
+      </div>
+
+      <div class="hero__readout">
+        <p class="hero__eyebrow" id="heroLocation">Select a state and district</p>
+        <p class="hero__figure">
+          <span id="heroTemp">—<span class="hero__unit">°C</span></span>
+          <span class="hero__mm" id="heroMmBlock"><span id="heroActual">—</span><span class="hero__mm-unit">mm</span></span>
+        </p>
+        <p class="hero__sub" id="heroDate">5-day district forecast</p>
+
+        <div class="hero__stats">
+          <div class="stat">
+            <span class="stat__label">Normal</span>
+            <span class="stat__value" id="heroNormal">—</span>
           </div>
-          <div class="stat-card">
-            <div class="label">Wind</div>
-            <div class="value" id="statWind">-- km/h</div>
+          <div class="stat">
+            <span class="stat__label">Departure</span>
+            <span class="stat__value" id="heroDeparture">—</span>
           </div>
-          <div class="stat-card">
-            <div class="label">UV Index</div>
-            <div class="value" id="statUV">--</div>
+          <div class="stat">
+            <span class="stat__label">IMD category</span>
+            <span class="stat__value" id="heroCategory">
+              <span class="badge" id="heroBadge">—</span>
+            </span>
           </div>
         </div>
       </div>
+    </section>
 
-      <div class="right-col">
-        <div class="section-label">Next 24 Hours</div>
-        <div class="hourly-row" id="hourlyRow"></div>
-
-        <div class="section-label">7-Day Forecast</div>
-        <div class="daily-list" id="dailyList"></div>
+    <!-- ============ 5-DAY FORECAST STRIP ============ -->
+    <section class="forecast" aria-label="5 day rainfall forecast">
+      <h2 class="forecast__title">5-day outlook</h2>
+      <div class="forecast__strip" id="forecastStrip">
+        <!-- day cards injected by JS -->
       </div>
-    </div>
+    </section>
+
+    <!-- ============ WARNING LEGEND ============ -->
+    <section class="legend" aria-label="IMD colour-coded warning legend">
+      <div class="legend__item">
+        <span class="legend__dot" style="--dot: var(--warn-green)"></span>
+        <div><strong>Green</strong><span>No warning — no action needed</span></div>
+      </div>
+      <div class="legend__item">
+        <span class="legend__dot" style="--dot: var(--warn-yellow)"></span>
+        <div><strong>Yellow</strong><span>Watch — stay informed</span></div>
+      </div>
+      <div class="legend__item">
+        <span class="legend__dot" style="--dot: var(--warn-orange)"></span>
+        <div><strong>Orange</strong><span>Alert — be prepared</span></div>
+      </div>
+      <div class="legend__item">
+        <span class="legend__dot" style="--dot: var(--warn-red)"></span>
+        <div><strong>Red</strong><span>Warning — take action</span></div>
+      </div>
+    </section>
+
+    <!-- ============ FOOTER ============ -->
+    <footer class="site-footer">
+      <p class="site-footer__credit">Copyright © Rishav</p>
+    </footer>
+
   </div>
 
-  <div class="footer-note">© Rishav</div>
-</div>
-
-<script src="script.js"></script>
-
+  <script src="script.js"></script>
 </body>
 </html>
