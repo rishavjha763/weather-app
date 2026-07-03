@@ -1,14 +1,4 @@
-/* =========================================================================
-   MEGH — State & District Rainfall Forecast
-   Design tokens
-   -------------------------------------------------------------------------
-   Palette  : dusk-monsoon ink background, teal rain accent, turmeric heat
-              accent (pre-monsoon warmth against post-monsoon relief), plus
-              IMD's own official Green/Yellow/Orange/Red warning colours.
-   Type     : Fraunces (display/numerals) + Public Sans (UI) + IBM Plex Mono
-              (data readouts — mm figures, %, dates read like instrument
-              output, so they get a monospaced treatment).
-   ========================================================================= */
+
 
 :root{
   /* --- core palette --- */
@@ -47,9 +37,7 @@
      even in light OS mode for consistency of the signature visual. */
 }
 
-/* =========================================================================
-   Reset
-   ========================================================================= */
+
 *, *::before, *::after{ box-sizing: border-box; }
 html, body{ height: 100%; }
 body{
@@ -73,9 +61,6 @@ h1,h2,h3,p{ margin: 0; }
   border-radius: 4px;
 }
 
-/* =========================================================================
-   Ambient backdrop
-   ========================================================================= */
 .sky{
   position: fixed;
   inset: 0;
@@ -110,9 +95,6 @@ h1,h2,h3,p{ margin: 0; }
   .sky__rain{ animation: none; }
 }
 
-/* =========================================================================
-   Page shell
-   ========================================================================= */
 .page{
   position: relative;
   z-index: 1;
@@ -121,9 +103,6 @@ h1,h2,h3,p{ margin: 0; }
   padding: 24px 20px 64px;
 }
 
-/* =========================================================================
-   Premium entrance motion
-   ========================================================================= */
 @keyframes fadeUp{
   from{ opacity: 0; transform: translateY(10px); }
   to{ opacity: 1; transform: translateY(0); }
@@ -139,9 +118,6 @@ h1,h2,h3,p{ margin: 0; }
   .hero.is-ready, .day-card{ animation: none; opacity: 1; }
 }
 
-/* =========================================================================
-   Header
-   ========================================================================= */
 .site-header{
   display: flex;
   align-items: center;
@@ -178,9 +154,6 @@ h1,h2,h3,p{ margin: 0; }
   letter-spacing: 0.02em;
 }
 
-/* =========================================================================
-   Status banner
-   ========================================================================= */
 .status-banner{
   display: none;
   align-items: center;
@@ -199,9 +172,6 @@ h1,h2,h3,p{ margin: 0; }
 .status-banner[data-tone="loading"]{ border-color: var(--line); color: var(--text-dim); }
 .status-banner[data-tone="live"]{ border-color: rgba(63,191,173,0.4); color: var(--rain-light); background: rgba(63,191,173,0.08); }
 
-/* =========================================================================
-   Controls
-   ========================================================================= */
 .controls{
   display: grid;
   grid-template-columns: 1fr auto auto;
@@ -368,9 +338,6 @@ h1,h2,h3,p{ margin: 0; }
   color: #072620;
 }
 
-/* =========================================================================
-   Hero — signature rain-gauge readout
-   ========================================================================= */
 .hero{
   display: grid;
   grid-template-columns: 220px 1fr;
@@ -491,9 +458,6 @@ h1,h2,h3,p{ margin: 0; }
   background: var(--dot, var(--text-dim));
 }
 
-/* =========================================================================
-   Forecast strip
-   ========================================================================= */
 .forecast__title{
   font-family: var(--font-display);
   font-size: 20px;
@@ -554,9 +518,6 @@ h1,h2,h3,p{ margin: 0; }
   color: var(--text-dim);
 }
 
-/* =========================================================================
-   Legend
-   ========================================================================= */
 .legend{
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -582,9 +543,6 @@ h1,h2,h3,p{ margin: 0; }
 .legend__item div{ display: flex; flex-direction: column; font-size: 12.5px; color: var(--text-dim); line-height: 1.4; }
 .legend__item strong{ color: var(--text); font-size: 13.5px; }
 
-/* =========================================================================
-   Footer
-   ========================================================================= */
 .site-footer{
   margin-top: 48px;
   padding-top: 20px;
@@ -602,9 +560,6 @@ h1,h2,h3,p{ margin: 0; }
 }
 .site-footer__credit{ margin-top: 8px; opacity: 0.7; text-align: center; }
 
-/* =========================================================================
-   Responsive breakpoints
-   ========================================================================= */
 
 /* Tablet */
 @media (max-width: 860px){

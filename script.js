@@ -1,19 +1,4 @@
-/* =========================================================================
-   MEGH — India Rainfall & Weather Forecast
-   -------------------------------------------------------------------------
-   Data source: Open-Meteo (https://open-meteo.com)
-     - Free, no API key, no signup, CORS-enabled — works directly from the
-       browser, unlike IMD's own API which needs a registered key and, per
-       IMD's docs, IP whitelisting for most endpoints.
-     - Geocoding API   → turns a typed city/town/district name into lat/lon
-       (restricted to India via country code "IN").
-     - Forecast API    → daily precipitation, temperature and a weather code
-       for the resolved coordinates.
 
-   Endpoints used:
-     https://geocoding-api.open-meteo.com/v1/search?name=...&country=IN
-     https://api.open-meteo.com/v1/forecast?latitude=..&longitude=..&daily=...
-   ========================================================================= */
 
 const CONFIG = {
   GEOCODE_URL: "https://geocoding-api.open-meteo.com/v1/search",
@@ -60,9 +45,7 @@ const WMO = {
   99: "Severe thunderstorm, hail",
 };
 
-// ---------------------------------------------------------------------
-// DOM references
-// ---------------------------------------------------------------------
+
 const el = {
   citySearch: document.getElementById("citySearch"),
   suggestList: document.getElementById("suggestList"),
@@ -102,9 +85,7 @@ let searchDebounce = null;
 let currentDayIndex = 0;
 let tempUnit = "C"; // 'C' or 'F' — Open-Meteo data is fetched in °C and converted on display
 
-// ---------------------------------------------------------------------
-// Init
-// ---------------------------------------------------------------------
+
 function init() {
   el.citySearch.addEventListener("input", onSearchInput);
   el.citySearch.addEventListener("keydown", onSearchKeydown);
@@ -124,9 +105,6 @@ function init() {
   searchAndPickFirst("New Delhi");
 }
 
-// ---------------------------------------------------------------------
-// Geocoding: search-as-you-type
-// ---------------------------------------------------------------------
 function onSearchInput() {
   selectedPlace = null;
   const q = el.citySearch.value.trim();
@@ -140,12 +118,7 @@ function onSearchInput() {
 
 async function fetchSuggestions(query) {
   try {
-    // NOTE: Open-Meteo's real parameter for restricting by country is
-    // `countryCode` (not `country`) — using the wrong name meant the filter
-    // was silently ignored/dropped by the server for some queries, which is
-    // why certain searches (especially state names) came back empty.
-    // Fix: fetch a wider, unfiltered set of matches, then filter to India
-    // ourselves — this is robust regardless of exact server param naming.
+   
     const url = new URL(CONFIG.GEOCODE_URL);
     url.searchParams.set("name", query);
     url.searchParams.set("count", "20");
@@ -156,9 +129,7 @@ async function fetchSuggestions(query) {
     const data = await res.json();
     const results = data.results || [];
 
-    // Keep only Indian matches (any feature type: city, town, district,
-    // or state/admin1 — so searching a state name like "Maharashtra" or
-    // "Kerala" resolves too, not just cities).
+  
     suggestions = results
       .filter((r) => r.country_code === CONFIG.COUNTRY)
       .slice(0, 8)
@@ -255,9 +226,7 @@ async function searchAndPickFirst(query) {
     );
 }
 
-// ---------------------------------------------------------------------
-// Premium extra: one-tap "use my current location"
-// ---------------------------------------------------------------------
+
 function useMyLocation() {
   if (!navigator.geolocation) {
     setStatus("error", "Geolocation is not supported by this browser.");
@@ -293,9 +262,6 @@ function useMyLocation() {
   );
 }
 
-// ---------------------------------------------------------------------
-// Status banner helper
-// ---------------------------------------------------------------------
 function setStatus(tone, message) {
   el.statusBanner.dataset.tone = tone;
   el.statusBanner.textContent = message;
@@ -305,9 +271,7 @@ function clearStatus() {
   el.statusBanner.classList.remove("is-visible");
 }
 
-// ---------------------------------------------------------------------
-// Forecast fetch
-// ---------------------------------------------------------------------
+
 async function loadForecast(place) {
   el.fetchBtn.disabled = true;
   setStatus("loading", `Fetching live forecast for ${place.name}…`);
@@ -374,7 +338,6 @@ function categorize(mm) {
   return CATEGORY_SCALE.find((c) => mm <= c.max);
 }
 
-// --- temperature unit handling -------------------------------------------
 function celsiusTo(unit, c) {
   return unit === "F" ? Math.round((c * 9) / 5 + 32) : Math.round(c);
 }
@@ -403,9 +366,6 @@ async function fetchWithTimeout(url) {
   }
 }
 
-// ---------------------------------------------------------------------
-// Rendering
-// ---------------------------------------------------------------------
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 function renderForecastStrip(days) {
@@ -495,5 +455,4 @@ function formatDate(iso, long = false) {
   );
 }
 
-// ---------------------------------------------------------------------
 document.addEventListener("DOMContentLoaded", init);
